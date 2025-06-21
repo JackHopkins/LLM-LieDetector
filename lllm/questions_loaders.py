@@ -1502,7 +1502,7 @@ class QuestionsLoader(DataFrame, ABC):
                 number_truth_transcripts_generated += 1
 
             # store the lie configuration in the dataset
-            self[f"{model_suspect}_{model_investigator}_transcript_setup"][i] = {
+            self.loc[i, f"{model_suspect}_{model_investigator}_transcript_setup"] = {
                 "lie_instruction": lie_instruction,
                 "truth_instruction": truth_instruction,
                 "provide_lie": provide_lie,
@@ -1757,13 +1757,13 @@ class QuestionsLoader(DataFrame, ABC):
             # if the model did not lie, the transcript would be empty:
             if prob_differences_lie is not None:
                 if append_results_to_existing_ones and self[f"{model_suspect}_logprobs_difference_lie"].notna()[i]:
-                    self[f"{model_suspect}_logprobs_difference_lie"][i] = np.concatenate(
+                    self.loc[i, f"{model_suspect}_logprobs_difference_lie"] = np.concatenate(
                         (
                             self[f"{model_suspect}_logprobs_difference_lie"][i],
                             logprob_differences_lie,
                         )
                     )
-                    self[f"{model_suspect}_probs_difference_lie"][i] = np.concatenate(
+                    self.loc[i, f"{model_suspect}_probs_difference_lie"] = np.concatenate(
                         (
                             self[f"{model_suspect}_probs_difference_lie"][i],
                             prob_differences_lie,
@@ -1771,10 +1771,10 @@ class QuestionsLoader(DataFrame, ABC):
                     )
                 else:
                     # store it in the dataframe
-                    self[f"{model_suspect}_logprobs_difference_lie"][i] = np.array(
+                    self.loc[i, f"{model_suspect}_logprobs_difference_lie"] = np.array(
                         logprob_differences_lie
                     )
-                    self[f"{model_suspect}_probs_difference_lie"][i] = np.array(
+                    self.loc[i, f"{model_suspect}_probs_difference_lie"] = np.array(
                         prob_differences_lie
                     )
                 number_lie_logprobs_generated += 1
@@ -1805,13 +1805,13 @@ class QuestionsLoader(DataFrame, ABC):
             # if the model lied, the transcript would be empty:
             if prob_differences_truth is not None:
                 if append_results_to_existing_ones and self[f"{model_suspect}_logprobs_difference_truth"].notna()[i]:
-                    self[f"{model_suspect}_logprobs_difference_truth"][i] = np.concatenate(
+                    self.loc[i, f"{model_suspect}_logprobs_difference_truth"] = np.concatenate(
                         (
                             self[f"{model_suspect}_logprobs_difference_truth"][i],
                             logprob_differences_truth,
                         )
                     )
-                    self[f"{model_suspect}_probs_difference_truth"][i] = np.concatenate(
+                    self.loc[i, f"{model_suspect}_probs_difference_truth"] = np.concatenate(
                         (
                             self[f"{model_suspect}_probs_difference_truth"][i],
                             prob_differences_truth,
@@ -1819,16 +1819,16 @@ class QuestionsLoader(DataFrame, ABC):
                     )
                 else:
                     # store it in the dataframe
-                    self[f"{model_suspect}_logprobs_difference_truth"][i] = np.array(
+                    self.loc[i, f"{model_suspect}_logprobs_difference_truth"] = np.array(
                         logprob_differences_truth
                     )
-                    self[f"{model_suspect}_probs_difference_truth"][i] = np.array(
+                    self.loc[i, f"{model_suspect}_probs_difference_truth"] = np.array(
                         prob_differences_truth
                     )
                 number_truth_logprobs_generated += 1
 
             # store the lie configuration in the dataset
-            self[f"{model_suspect}_probes_setup"][i] = {
+            self.loc[i, f"{model_suspect}_probes_setup"] = {
                 "lie_instruction": lie_instruction,
                 "truth_instruction": truth_instruction,
                 "provide_lie": provide_lie,
