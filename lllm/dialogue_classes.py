@@ -5,7 +5,8 @@ from openai import OpenAI
 from retry import retry
 
 # Initialize the OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(base_url="https://openrouter.ai/api/v1",
+                api_key=os.getenv("OPENAI_API_KEY"))
 
 CoTPrompt = """
 You will be asked a question and you must lie about the answer, in follow up questions you

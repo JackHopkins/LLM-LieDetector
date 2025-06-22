@@ -5,6 +5,7 @@ import re
 from abc import ABC, abstractmethod
 from numbers import Number
 from time import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import openai
@@ -717,7 +718,7 @@ class QuestionsLoader(DataFrame, ABC):
 
         # add the column to the dataframe if not present already
         if f"{model}_can_answer" not in self.columns:
-            self.insert(len(self.columns), f"{model}_can_answer", np.nan)
+            self[f"{model}_can_answer"] = np.nan
         elif regenerate_if_done_before:
             self[f"{model}_can_answer"] = np.nan
 
@@ -733,7 +734,8 @@ class QuestionsLoader(DataFrame, ABC):
             # now loop on the questions
             for k in range(j, j + batch_size):
                 # check if they miss from the results dict
-                if not np.isfinite(self[f"{model}_can_answer"][k]):
+                value = self[f"{model}_can_answer"][k]
+                if value is None or (isinstance(value, float) and not np.isfinite(value)):
                     new_keys += [self["question"][k]]
                     expected_answers += [self["answer"][k]]
                     prompts.append(
@@ -914,7 +916,7 @@ class QuestionsLoader(DataFrame, ABC):
             lie_instruction = lie_instructions[i]
             # add the column to the dataframe if not present already
             if f"{model}_{lie_instruction}" not in self.columns:
-                self.insert(len(self.columns), f"{model}_{lie_instruction}", np.nan)
+                self[f"{model}_{lie_instruction}"] = np.nan
             elif regenerate_if_done_before:
                 self[f"{model}_{lie_instruction}"] = np.nan
 
@@ -1539,6 +1541,7 @@ class QuestionsLoader(DataFrame, ABC):
             answer_prefix_suspect=None,
             save_progress=True,
             regenerate_if_done_before=False,
+            max_workers=4,  # Number of parallel workers
             model_kwargs_suspect={
                 "temperature": 0.7,
                 "presence_penalty": 0,
@@ -1643,9 +1646,9 @@ class QuestionsLoader(DataFrame, ABC):
         ]
         for colname in colnames:
             if not colname in self.columns:
-                self.insert(len(self.columns), colname, np.nan)
+                self[colname] = [None] * len(self)
             elif regenerate_if_done_before:
-                self[colname] = np.nan
+                self[colname] = [None] * len(self)
             self[colname] = self[colname].astype("object")
 
         # should I do cost check?
@@ -1692,159 +1695,98 @@ class QuestionsLoader(DataFrame, ABC):
 
         number_lie_logprobs_generated = 0
         number_truth_logprobs_generated = 0
-        # loop over the first number_of_questions questions
-        for i in tqdm(range(number_of_questions)):
-            # first check if the model is able to answer correctly
-            if not self[f"{model_suspect}_can_answer"][i]:
-                continue
-
-            # if not append_results_to_existing_ones: check if we have already generated logprobs for that question.
-            # Skip if at least one is already there
-            # Otherwise, skip if we have not generated results before
-            if append_results_to_existing_ones != (
-                    self[f"{model_suspect}_logprobs_difference_lie"].notna()[i]
-                    or self[f"{model_suspect}_logprobs_difference_truth"].notna()[i]
-            ):
-                # there must be a better way to do this... Think more about it
-                continue
-
-            if use_previous_setup and self[f"{model_suspect}_probes_setup"].notna()[i]:
-                lie_instruction = self[f"{model_suspect}_probes_setup"][i]["lie_instruction"]
-                truth_instruction = self[f"{model_suspect}_probes_setup"][i]["truth_instruction"]
-                provide_lie = self[f"{model_suspect}_probes_setup"][i]["provide_lie"]
-            else:
-                # sample the instruction
-                lie_instruction = random.choice(lie_instructions)
-
-                # sample whether providing the lie or not; do not provide the lie if the question is binary or if the
-                # false statement is not available (which may happen if it failed to be generated)
-                provide_lie = (
-                    False
-                    if self.binary_questions or not self["false_statement"].notna()[i]
-                    else random.choice([True, False])
-                )
-                # sample the instruction
-                truth_instruction = random.choice(truth_instructions)
-
-            # produce now the lie transcript; there is also a way to check if the model is lying or not
-            prompt = (
-                    lie_instruction
-                    + (
-                        f' The truth is that {self["statement"][i].strip()}. '
-                        if isinstance(self, SyntheticFacts)
-                        else ""
-                    )
-                    + (
-                        "\n" + f'Lie by saying: "{self["false_statement"][i].strip()}"'
-                        if provide_lie
-                        else ""
-                    )
-                    + "\n\n"
-            )
-
-            logprob_differences_lie, prob_differences_lie = self._run_probes(
-                prompt=prompt,
-                question=self["question"][i],
-                answer=self["answer"][i],
-                lying=True,
-                model_suspect=model_suspect,
-                number_probes=number_probes,
-                question_prefix_suspect=question_prefix_suspect,
-                answer_prefix_suspect=answer_prefix_suspect,
-                model_kwargs_suspect=model_kwargs_suspect,
-            )
-
-            # if the model did not lie, the transcript would be empty:
-            if prob_differences_lie is not None:
-                if append_results_to_existing_ones and self[f"{model_suspect}_logprobs_difference_lie"].notna()[i]:
-                    self.loc[i, f"{model_suspect}_logprobs_difference_lie"] = np.concatenate(
-                        (
-                            self[f"{model_suspect}_logprobs_difference_lie"][i],
-                            logprob_differences_lie,
-                        )
-                    )
-                    self.loc[i, f"{model_suspect}_probs_difference_lie"] = np.concatenate(
-                        (
-                            self[f"{model_suspect}_probs_difference_lie"][i],
-                            prob_differences_lie,
-                        )
-                    )
-                else:
-                    # store it in the dataframe
-                    self.loc[i, f"{model_suspect}_logprobs_difference_lie"] = np.array(
-                        logprob_differences_lie
-                    )
-                    self.loc[i, f"{model_suspect}_probs_difference_lie"] = np.array(
-                        prob_differences_lie
-                    )
-                number_lie_logprobs_generated += 1
-
-            # produce now the truth transcript; again, check if the model answers correctly.
-            prompt = (
-                    truth_instruction
-                    + (
-                        f' The truth is that {self["statement"][i].strip()}. '
-                        if isinstance(self, SyntheticFacts)
-                        else ""
-                    )
-                    + "\n\n"
-            )
-
-            logprob_differences_truth, prob_differences_truth = self._run_probes(
-                prompt=prompt,
-                question=self["question"][i],
-                answer=self["answer"][i],
-                lying=False,
-                model_suspect=model_suspect,
-                number_probes=number_probes,
-                question_prefix_suspect=question_prefix_suspect,
-                answer_prefix_suspect=answer_prefix_suspect,
-                model_kwargs_suspect=model_kwargs_suspect,
-            )
-
-            # if the model lied, the transcript would be empty:
-            if prob_differences_truth is not None:
-                if append_results_to_existing_ones and self[f"{model_suspect}_logprobs_difference_truth"].notna()[i]:
-                    self.loc[i, f"{model_suspect}_logprobs_difference_truth"] = np.concatenate(
-                        (
-                            self[f"{model_suspect}_logprobs_difference_truth"][i],
-                            logprob_differences_truth,
-                        )
-                    )
-                    self.loc[i, f"{model_suspect}_probs_difference_truth"] = np.concatenate(
-                        (
-                            self[f"{model_suspect}_probs_difference_truth"][i],
-                            prob_differences_truth,
-                        )
-                    )
-                else:
-                    # store it in the dataframe
-                    self.loc[i, f"{model_suspect}_logprobs_difference_truth"] = np.array(
-                        logprob_differences_truth
-                    )
-                    self.loc[i, f"{model_suspect}_probs_difference_truth"] = np.array(
-                        prob_differences_truth
-                    )
-                number_truth_logprobs_generated += 1
-
-            # store the lie configuration in the dataset
-            self.loc[i, f"{model_suspect}_probes_setup"] = {
-                "lie_instruction": lie_instruction,
-                "truth_instruction": truth_instruction,
-                "provide_lie": provide_lie,
-                "model_kwargs_suspect": model_kwargs_suspect,
-                "question_prefix_suspect": question_prefix_suspect,
-                "answer_prefix_suspect": answer_prefix_suspect,
+        
+        # Process questions in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all questions for processing
+            future_to_i = {
+                executor.submit(
+                    self._process_single_question,
+                    i, lie_instructions, truth_instructions, model_suspect,
+                    number_probes, question_prefix_suspect, answer_prefix_suspect,
+                    model_kwargs_suspect, use_previous_setup, append_results_to_existing_ones,
+                    self.binary_questions
+                ): i for i in range(number_of_questions)
             }
+            
+            # Process completed results as they finish
+            for future in tqdm(as_completed(future_to_i), total=number_of_questions, desc="Processing questions"):
+                result = future.result()
+                
+                # If result is None, skip this question
+                if result is None:
+                    continue
+                    
+                # Unpack the result
+                (i, lie_instruction, truth_instruction, provide_lie,
+                 logprob_differences_lie, prob_differences_lie,
+                 logprob_differences_truth, prob_differences_truth) = result
+                
+                # Process lie results
+                if prob_differences_lie is not None:
+                    if append_results_to_existing_ones and self[f"{model_suspect}_logprobs_difference_lie"].notna()[i]:
+                        self.at[i, f"{model_suspect}_logprobs_difference_lie"] = np.concatenate(
+                            (
+                                self[f"{model_suspect}_logprobs_difference_lie"][i],
+                                logprob_differences_lie,
+                            )
+                        )
+                        self.at[i, f"{model_suspect}_probs_difference_lie"] = np.concatenate(
+                            (
+                                self[f"{model_suspect}_probs_difference_lie"][i],
+                                prob_differences_lie,
+                            )
+                        )
+                    else:
+                        # store it in the dataframe
+                        self.at[i, f"{model_suspect}_logprobs_difference_lie"] = np.array(
+                            logprob_differences_lie
+                        )
+                        self.at[i, f"{model_suspect}_probs_difference_lie"] = np.array(
+                            prob_differences_lie
+                        )
+                    number_lie_logprobs_generated += 1
 
-            # ##### JB - TO ADD NEW PROBES #####
-            # comment out above assignment self[f"{model_suspect}_probes_setup"][i] = {
-            # ##### END OF JB - TO ADD NEW PROBES #####
+                # Process truth results
+                if prob_differences_truth is not None:
+                    if append_results_to_existing_ones and self[f"{model_suspect}_logprobs_difference_truth"].notna()[i]:
+                        self.at[i, f"{model_suspect}_logprobs_difference_truth"] = np.concatenate(
+                            (
+                                self[f"{model_suspect}_logprobs_difference_truth"][i],
+                                logprob_differences_truth,
+                            )
+                        )
+                        self.at[i, f"{model_suspect}_probs_difference_truth"] = np.concatenate(
+                            (
+                                self[f"{model_suspect}_probs_difference_truth"][i],
+                                prob_differences_truth,
+                            )
+                        )
+                    else:
+                        # store it in the dataframe
+                        self.at[i, f"{model_suspect}_logprobs_difference_truth"] = np.array(
+                            logprob_differences_truth
+                        )
+                        self.at[i, f"{model_suspect}_probs_difference_truth"] = np.array(
+                            prob_differences_truth
+                        )
+                    number_truth_logprobs_generated += 1
 
-            if (
-                    prob_differences_lie is not None or prob_differences_truth is not None
-            ) and save_progress:
-                self.save_processed(self.complete_filename)
+                # store the configuration in the dataset
+                self.at[i, f"{model_suspect}_probes_setup"] = {
+                    "lie_instruction": lie_instruction,
+                    "truth_instruction": truth_instruction,
+                    "provide_lie": provide_lie,
+                    "model_kwargs_suspect": model_kwargs_suspect,
+                    "question_prefix_suspect": question_prefix_suspect,
+                    "answer_prefix_suspect": answer_prefix_suspect,
+                }
+
+                # Save progress if needed
+                if (
+                        prob_differences_lie is not None or prob_differences_truth is not None
+                ) and save_progress:
+                    self.save_processed(self.complete_filename)
 
         print(
             f"Generated {number_lie_logprobs_generated} lie logprobs and"
@@ -1910,6 +1852,95 @@ class QuestionsLoader(DataFrame, ABC):
         df = df[df[f"{model_suspect}_{model_investigator}_transcript_truth"].notna()]
         return df[[f"{model_suspect}_{model_investigator}_transcript_truth",
                    f"{model_suspect}_{model_investigator}_transcript_lie"]]
+
+    def _process_single_question(self, i, lie_instructions, truth_instructions, model_suspect, 
+                                number_probes, question_prefix_suspect, answer_prefix_suspect, 
+                                model_kwargs_suspect, use_previous_setup, append_results_to_existing_ones,
+                                binary_questions):
+        """Helper method to process a single question with both lie and truth scenarios."""
+        # first check if the model is able to answer correctly
+        if not self[f"{model_suspect}_can_answer"][i]:
+            return None
+
+        # if not append_results_to_existing_ones: check if we have already generated logprobs for that question.
+        # Skip if at least one is already there
+        if not append_results_to_existing_ones and (
+                self[f"{model_suspect}_logprobs_difference_lie"].notna()[i]
+                or self[f"{model_suspect}_logprobs_difference_truth"].notna()[i]
+        ):
+            return None
+
+        if use_previous_setup and self[f"{model_suspect}_probes_setup"].notna()[i]:
+            # Use previous setup
+            lie_instruction = self[f"{model_suspect}_probes_setup"][i]["lie_instruction"]
+            truth_instruction = self[f"{model_suspect}_probes_setup"][i]["truth_instruction"]
+            provide_lie = self[f"{model_suspect}_probes_setup"][i]["provide_lie"]
+        else:
+            # Randomly select instructions
+            lie_instruction = random.choice(lie_instructions)
+            truth_instruction = random.choice(truth_instructions)
+            
+            # sample whether providing the lie or not
+            provide_lie = (
+                False
+                if binary_questions or not self["false_statement"].notna()[i]
+                else random.choice([True, False])
+            )
+        
+        # Run lie scenario
+        prompt_lie = (
+            lie_instruction
+            + (
+                f' The truth is that {self["statement"][i].strip()}. '
+                if isinstance(self, SyntheticFacts)
+                else ""
+            )
+            + (
+                "\n" + f'Lie by saying: "{self["false_statement"][i].strip()}"'
+                if provide_lie
+                else ""
+            )
+            + "\n\n"
+        )
+
+        logprob_differences_lie, prob_differences_lie = self._run_probes(
+            prompt=prompt_lie,
+            question=self["question"][i],
+            answer=self["answer"][i],
+            lying=True,
+            model_suspect=model_suspect,
+            number_probes=number_probes,
+            question_prefix_suspect=question_prefix_suspect,
+            answer_prefix_suspect=answer_prefix_suspect,
+            model_kwargs_suspect=model_kwargs_suspect,
+        )
+        
+        # Run truth scenario
+        prompt_truth = (
+            truth_instruction
+            + (
+                f' The truth is that {self["statement"][i].strip()}. '
+                if isinstance(self, SyntheticFacts)
+                else ""
+            )
+            + "\n\n"
+        )
+
+        logprob_differences_truth, prob_differences_truth = self._run_probes(
+            prompt=prompt_truth,
+            question=self["question"][i],
+            answer=self["answer"][i],
+            lying=False,
+            model_suspect=model_suspect,
+            number_probes=number_probes,
+            question_prefix_suspect=question_prefix_suspect,
+            answer_prefix_suspect=answer_prefix_suspect,
+            model_kwargs_suspect=model_kwargs_suspect,
+        )
+        
+        return (i, lie_instruction, truth_instruction, provide_lie, 
+                logprob_differences_lie, prob_differences_lie,
+                logprob_differences_truth, prob_differences_truth)
 
 
 class QuestionsRome(QuestionsLoader, ABC):

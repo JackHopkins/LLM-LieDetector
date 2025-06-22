@@ -10,7 +10,8 @@ from tenacity import (
 )  # for exponential backoff
 
 # Initialize the OpenAI client with API key from environment
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(base_url="https://openrouter.ai/api/v1",
+                api_key=os.getenv("OPENAI_API_KEY"))
 
 # Maximum number of tokens that the openai api allows me to request per minute
 RATE_LIMIT = 250000
