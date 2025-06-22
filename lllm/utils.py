@@ -10,8 +10,7 @@ from tenacity import (
 )  # for exponential backoff
 
 # Initialize the OpenAI client with API key from environment
-client = OpenAI(base_url="https://openrouter.ai/api/v1",
-                api_key=os.getenv("OPENAI_API_KEY"))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Maximum number of tokens that the openai api allows me to request per minute
 RATE_LIMIT = 250000
@@ -27,13 +26,18 @@ def completion_with_backoff(**kwargs):
     # Convert legacy parameters to new API format
     prompt = kwargs.get("prompt", "")
     
-    # Handle string content directly - don't wrap in array
-    messages = [{"role": "user", "content": prompt}]
+    messages = kwargs.get("messages", None)
+    if messages:
+        formatted_messages = messages
+    elif prompt:
+        formatted_messages = [{"role": "user", "content": prompt}]
+    else:
+        raise ValueError("Either 'messages' or 'prompt' must be provided")
     
     # Map common parameters
     new_kwargs = {
         "model": kwargs.get("model", "gpt-3.5-turbo"),
-        "messages": messages,
+        "messages": formatted_messages,
         "max_tokens": kwargs.get("max_tokens"),
         "temperature": kwargs.get("temperature"),
         "top_p": kwargs.get("top_p"),
