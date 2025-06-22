@@ -3,6 +3,7 @@ import os
 from time import sleep
 
 from openai import OpenAI
+from anthropic import Anthropic
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -11,6 +12,7 @@ from tenacity import (
 
 # Initialize the OpenAI client with API key from environment
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Maximum number of tokens that the openai api allows me to request per minute
 RATE_LIMIT = 250000
@@ -85,6 +87,88 @@ def completion_create_retry(*args, sleep_time=5, **kwargs):
         else:
             prompts = kwargs['prompt']
         return kwargs['endpoint'](prompts, **kwargs)
+    elif "claude" in kwargs['model']:
+        while True:
+            try:
+                # Convert to new API format
+                prompt = kwargs.get("prompt", "")
+                
+                # Handle batch prompts
+                if isinstance(prompt, list):
+                    # Process each prompt separately and collect responses
+                    all_choices = []
+                    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                    
+                    for i, p in enumerate(prompt):
+                        # Ensure content is a string, not wrapped in array
+                        messages = [{"role": "user", "content": str(p)}]
+                        
+                        new_kwargs = {
+                            "messages": messages,
+                            "max_tokens": kwargs.get("max_tokens"),
+                            "temperature": kwargs.get("temperature"),
+                        }
+                        
+                        # Remove None values
+                        new_kwargs = {k: v for k, v in new_kwargs.items() if v is not None}
+                        
+                        response = anthropic_client.messages.create(model=kwargs["model"], **new_kwargs)
+                        
+                        # Add choices with correct indexing
+                        all_choices.append({
+                            "text": response.content[0].text,
+                            "index": i,
+                            "logprobs": None,
+                            "finish_reason": response.stop_reason
+                        })
+                        
+                        if response.usage:
+                            total_usage["prompt_tokens"] += response.usage.input_tokens
+                            total_usage["completion_tokens"] += response.usage.output_tokens
+                            total_usage["total_tokens"] += response.usage.input_tokens + response.usage.output_tokens
+                    
+                    return {
+                        "choices": all_choices,
+                        "model": kwargs["model"],
+                        "usage": total_usage
+                    }
+                else:
+                    # Single prompt - ensure content is a string
+                    messages = [{"role": "user", "content": str(prompt)}]
+                    
+                    new_kwargs = {
+                        "max_tokens": kwargs.get("max_tokens"),
+                        "temperature": kwargs.get("temperature"),
+                        "top_p": kwargs.get("top_p"),
+                        "n": kwargs.get("n"),
+                        "stop": kwargs.get("stop"),
+                        "presence_penalty": kwargs.get("presence_penalty"),
+                        "frequency_penalty": kwargs.get("frequency_penalty"),
+                        "logit_bias": kwargs.get("logit_bias"),
+                    }
+                    
+                    # Remove None values
+                    new_kwargs = {k: v for k, v in new_kwargs.items() if v is not None}
+                    
+                    response = anthropic_client.messages.create(model=kwargs["model"], **new_kwargs)
+
+                    return {
+                        "choices": [{
+                            "text": response.content[0].text,
+                            "index": 0,
+                            "logprobs": None,
+                            "finish_reason": response.stop_reason
+                        }],
+                        "model": kwargs["model"],
+                        "usage": {
+                            "prompt_tokens": response.usage.input_tokens,
+                            "completion_tokens": response.usage.output_tokens,
+                            "total_tokens": response.usage.input_tokens + response.usage.output_tokens
+                        }
+                    }
+            except Exception as e:
+                print(f"Error in completion_create_retry: {e}")
+                sleep(sleep_time)
     else:
         while True:
             try:
@@ -142,7 +226,6 @@ def completion_create_retry(*args, sleep_time=5, **kwargs):
                     messages = [{"role": "user", "content": str(prompt)}]
                     
                     new_kwargs = {
-                        "model": kwargs.get("model", "gpt-3.5-turbo"),
                         "messages": messages,
                         "max_tokens": kwargs.get("max_tokens"),
                         "temperature": kwargs.get("temperature"),
@@ -157,7 +240,7 @@ def completion_create_retry(*args, sleep_time=5, **kwargs):
                     # Remove None values
                     new_kwargs = {k: v for k, v in new_kwargs.items() if v is not None}
                     
-                    response = client.chat.completions.create(**new_kwargs)
+                    response = client.chat.completions.create(model=kwargs["model"], **new_kwargs)
                     
                     # Format response to match legacy API structure
                     return {

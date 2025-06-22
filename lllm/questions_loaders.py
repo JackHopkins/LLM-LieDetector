@@ -11,7 +11,7 @@ import openai
 import pandas as pd
 from pandas import DataFrame
 from scipy.special import logsumexp
-from tqdm import tqdm
+from tqdm import tqdm, trange
 from pkg_resources import resource_filename
 
 from lllm import Suspect, DynamicInvestigator, Dialogue, StaticInvestigator
@@ -731,7 +731,7 @@ class QuestionsLoader(DataFrame, ABC):
             new_keys = []
             expected_answers = []
             # now loop on the questions
-            for k in range(j, j + batch_size):
+            for k in trange(j, j + batch_size):
                 # check if they miss from the results dict
                 if not np.isfinite(self[f"{model}_can_answer"][k]):
                     new_keys += [self["question"][k]]
@@ -928,7 +928,7 @@ class QuestionsLoader(DataFrame, ABC):
                 new_keys = []
                 expected_answers = []
                 # now loop on the questions
-                for k in range(j, j + batch_size):
+                for k in trange(j, j + batch_size):
                     # check if they miss from the results dict and if the model can answer to that question
                     if (
                             not self[f"{model}_{lie_instruction}"].notna()[k]
@@ -1166,7 +1166,7 @@ class QuestionsLoader(DataFrame, ABC):
             new_keys = []
             expected_answers = []
             # now loop on the questions
-            for k in range(j, j + batch_size):
+            for k in trange(j, j + batch_size):
                 # check if they miss from the results dict and if the model can answer to it!
                 if (
                         not self[f"false_statement"].notna()[k]
@@ -2165,7 +2165,7 @@ Lie to the following question by saying that the answer is """
             new_keys = []
             expected_answers = []
             # now loop on the questions
-            for k in range(j, j + batch_size):
+            for k in trange(j, j + batch_size):
                 # check if they miss from the results dict and if the model can answer to it!
                 if (
                         not self[f"false_statement"].notna()[k]
@@ -2636,7 +2636,7 @@ Example 2"""
             new_keys = []
             expected_answers = []
             # now loop on the questions
-            for k in range(j, j + batch_size):
+            for k in trange(j, j + batch_size):
                 # check if they miss from the results dict and if the model can answer to it!
                 if (
                         not self[f"false_statement"].notna()[k]
@@ -2880,7 +2880,7 @@ Lie to the following question by saying that the answer is """
             new_keys = []
             expected_answers = []
             # now loop on the questions
-            for k in range(j, j + batch_size):
+            for k in trange(j, j + batch_size):
                 # check if they miss from the results dict and if the model can answer to it!
                 if (
                         not self[f"false_statement"].notna()[k]
