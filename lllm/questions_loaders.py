@@ -21,6 +21,9 @@ from lllm.utils import completion_create_retry
 YES_TOKENS = set(["yes", "absolutely", "certainly", "undoubtedly"])
 NO_TOKENS = set(["no", "never"])
 
+# Global DEBUG flag for debug output
+DEBUG = False
+
 # in these file, I define classes to load the different data and return them in the same format.
 # I use the abstract class QuestionsLoader to define the interface of the classes that will load the data.
 # QuestionsLoader inherits from DataFrame, so the classes that inherit from QuestionsLoader will return a DataFrame.
@@ -1695,7 +1698,7 @@ class QuestionsLoader(DataFrame, ABC):
 
         number_lie_logprobs_generated = 0
         number_truth_logprobs_generated = 0
-        
+
         # Process questions in parallel
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all questions for processing
@@ -1708,20 +1711,20 @@ class QuestionsLoader(DataFrame, ABC):
                     self.binary_questions
                 ): i for i in range(number_of_questions)
             }
-            
+
             # Process completed results as they finish
             for future in tqdm(as_completed(future_to_i), total=number_of_questions, desc="Processing questions"):
                 result = future.result()
-                
+
                 # If result is None, skip this question
                 if result is None:
                     continue
-                    
+
                 # Unpack the result
                 (i, lie_instruction, truth_instruction, provide_lie,
                  logprob_differences_lie, prob_differences_lie,
                  logprob_differences_truth, prob_differences_truth) = result
-                
+
                 # Process lie results
                 if prob_differences_lie is not None:
                     if append_results_to_existing_ones and self[f"{model_suspect}_logprobs_difference_lie"].notna()[i]:
@@ -1853,8 +1856,8 @@ class QuestionsLoader(DataFrame, ABC):
         return df[[f"{model_suspect}_{model_investigator}_transcript_truth",
                    f"{model_suspect}_{model_investigator}_transcript_lie"]]
 
-    def _process_single_question(self, i, lie_instructions, truth_instructions, model_suspect, 
-                                number_probes, question_prefix_suspect, answer_prefix_suspect, 
+    def _process_single_question(self, i, lie_instructions, truth_instructions, model_suspect,
+                                number_probes, question_prefix_suspect, answer_prefix_suspect,
                                 model_kwargs_suspect, use_previous_setup, append_results_to_existing_ones,
                                 binary_questions):
         """Helper method to process a single question with both lie and truth scenarios."""
@@ -1879,14 +1882,14 @@ class QuestionsLoader(DataFrame, ABC):
             # Randomly select instructions
             lie_instruction = random.choice(lie_instructions)
             truth_instruction = random.choice(truth_instructions)
-            
+
             # sample whether providing the lie or not
             provide_lie = (
                 False
                 if binary_questions or not self["false_statement"].notna()[i]
                 else random.choice([True, False])
             )
-        
+
         # Run lie scenario
         prompt_lie = (
             lie_instruction
@@ -1914,7 +1917,7 @@ class QuestionsLoader(DataFrame, ABC):
             answer_prefix_suspect=answer_prefix_suspect,
             model_kwargs_suspect=model_kwargs_suspect,
         )
-        
+
         # Run truth scenario
         prompt_truth = (
             truth_instruction
@@ -1937,8 +1940,8 @@ class QuestionsLoader(DataFrame, ABC):
             answer_prefix_suspect=answer_prefix_suspect,
             model_kwargs_suspect=model_kwargs_suspect,
         )
-        
-        return (i, lie_instruction, truth_instruction, provide_lie, 
+
+        return (i, lie_instruction, truth_instruction, provide_lie,
                 logprob_differences_lie, prob_differences_lie,
                 logprob_differences_truth, prob_differences_truth)
 

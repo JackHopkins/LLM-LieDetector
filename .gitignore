@@ -14,3 +14,7 @@ truths.txt
 chatbot.py
 chatbot(old).py
 *.out
+/cached_models/
+/cached_datasets/
+
+*.pkl

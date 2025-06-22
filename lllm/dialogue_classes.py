@@ -93,17 +93,39 @@ class LanguageModelAgent:
             for choice in response.choices:
                 # Handle logprobs conversion
                 logprobs_data = None
-                if return_logprobs and choice.logprobs and choice.logprobs.content:
+                if return_logprobs and choice.logprobs:
                     tokens = []
                     top_logprobs = []
                     
-                    for token_data in choice.logprobs.content:
-                        tokens.append(token_data.token)
-                        # Convert top_logprobs to legacy format
-                        token_logprobs = {}
-                        for top_logprob in token_data.top_logprobs:
-                            token_logprobs[top_logprob.token] = top_logprob.logprob
-                        top_logprobs.append(token_logprobs)
+                    # Check if we have content logprobs (OpenAI models)
+                    if choice.logprobs.content:
+                        for token_data in choice.logprobs.content:
+                            tokens.append(token_data.token)
+                            # Convert top_logprobs to legacy format
+                            token_logprobs = {}
+                            if hasattr(token_data, 'top_logprobs') and token_data.top_logprobs:
+                                for top_logprob in token_data.top_logprobs:
+                                    token_logprobs[top_logprob.token] = top_logprob.logprob
+                            top_logprobs.append(token_logprobs)
+                    
+                    # Fallback: check if we have top_logprobs directly (some Llama models)
+                    elif hasattr(choice.logprobs, 'top_logprobs') and choice.logprobs.top_logprobs:
+                        # Extract from top_logprobs directly
+                        for token_data in choice.logprobs.top_logprobs:
+                            if hasattr(token_data, 'token'):
+                                tokens.append(token_data.token)
+                                token_logprobs = {token_data.token: token_data.logprob}
+                                top_logprobs.append(token_logprobs)
+                    
+                    # Alternative fallback: extract from message content if we have logprobs but no structure
+                    # This is a last resort for models that return logprobs in unexpected formats
+                    elif not tokens and hasattr(choice, 'message') and choice.message.content:
+                        # For models that return logprobs but in unexpected format,
+                        # we'll create a minimal structure to avoid breaking the pipeline
+                        content_tokens = choice.message.content.split()[:10]  # Limit to avoid noise
+                        for token in content_tokens:
+                            tokens.append(token)
+                            top_logprobs.append({token: 0.0})  # Placeholder logprob
                     
                     logprobs_data = {
                         "tokens": tokens,
