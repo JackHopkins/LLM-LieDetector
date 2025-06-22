@@ -20,6 +20,9 @@ from lllm.utils import completion_create_retry
 YES_TOKENS = set(["yes", "absolutely", "certainly", "undoubtedly"])
 NO_TOKENS = set(["no", "never"])
 
+# Global DEBUG flag for debug output
+DEBUG = False
+
 # in these file, I define classes to load the different data and return them in the same format.
 # I use the abstract class QuestionsLoader to define the interface of the classes that will load the data.
 # QuestionsLoader inherits from DataFrame, so the classes that inherit from QuestionsLoader will return a DataFrame.
@@ -717,7 +720,7 @@ class QuestionsLoader(DataFrame, ABC):
 
         # add the column to the dataframe if not present already
         if f"{model}_can_answer" not in self.columns:
-            self.insert(len(self.columns), f"{model}_can_answer", np.nan)
+            self[f"{model}_can_answer"] = np.nan
         elif regenerate_if_done_before:
             self[f"{model}_can_answer"] = np.nan
 
@@ -733,7 +736,8 @@ class QuestionsLoader(DataFrame, ABC):
             # now loop on the questions
             for k in range(j, j + batch_size):
                 # check if they miss from the results dict
-                if not np.isfinite(self[f"{model}_can_answer"][k]):
+                value = self[f"{model}_can_answer"][k]
+                if value is None or (isinstance(value, float) and not np.isfinite(value)):
                     new_keys += [self["question"][k]]
                     expected_answers += [self["answer"][k]]
                     prompts.append(
@@ -914,7 +918,7 @@ class QuestionsLoader(DataFrame, ABC):
             lie_instruction = lie_instructions[i]
             # add the column to the dataframe if not present already
             if f"{model}_{lie_instruction}" not in self.columns:
-                self.insert(len(self.columns), f"{model}_{lie_instruction}", np.nan)
+                self[f"{model}_{lie_instruction}"] = np.nan
             elif regenerate_if_done_before:
                 self[f"{model}_{lie_instruction}"] = np.nan
 
@@ -1643,9 +1647,9 @@ class QuestionsLoader(DataFrame, ABC):
         ]
         for colname in colnames:
             if not colname in self.columns:
-                self.insert(len(self.columns), colname, np.nan)
+                self[colname] = [None] * len(self)
             elif regenerate_if_done_before:
-                self[colname] = np.nan
+                self[colname] = [None] * len(self)
             self[colname] = self[colname].astype("object")
 
         # should I do cost check?
@@ -1771,12 +1775,48 @@ class QuestionsLoader(DataFrame, ABC):
                     )
                 else:
                     # store it in the dataframe
-                    self.loc[i, f"{model_suspect}_logprobs_difference_lie"] = np.array(
-                        logprob_differences_lie
-                    )
-                    self.loc[i, f"{model_suspect}_probs_difference_lie"] = np.array(
-                        prob_differences_lie
-                    )
+                    if DEBUG:
+                        print(f"🔍 DEBUG: Storing lie logprobs for question {i}, model {model_suspect}")
+                        print(f"🔍 DEBUG: logprob_differences_lie type: {type(logprob_differences_lie)}")
+                        print(f"🔍 DEBUG: logprob_differences_lie length: {len(logprob_differences_lie) if hasattr(logprob_differences_lie, '__len__') else 'no len'}")
+                        print(f"🔍 DEBUG: prob_differences_lie type: {type(prob_differences_lie)}")
+                        print(f"🔍 DEBUG: prob_differences_lie length: {len(prob_differences_lie) if hasattr(prob_differences_lie, '__len__') else 'no len'}")
+                    
+                    try:
+                        logprob_array = np.array(logprob_differences_lie)
+                        prob_array = np.array(prob_differences_lie)
+                        if DEBUG:
+                            print(f"🔍 DEBUG: Created numpy arrays - logprob shape: {logprob_array.shape}, prob shape: {prob_array.shape}")
+                        
+                        logprob_col = f"{model_suspect}_logprobs_difference_lie"
+                        prob_col = f"{model_suspect}_probs_difference_lie"
+                        if DEBUG:
+                            print(f"🔍 DEBUG: Column names - logprob: {logprob_col}, prob: {prob_col}")
+                            print(f"🔍 DEBUG: Columns exist - logprob: {logprob_col in self.columns}, prob: {prob_col in self.columns}")
+                            print(f"🔍 DEBUG: DataFrame index type: {type(self.index)}, row {i} in index: {i in self.index}")
+                        
+                        # Use different assignment method
+                        # self.loc[self.index[i], logprob_col] = logprob_array.tolist()
+                        # self.loc[self.index[i], prob_col] = prob_array.tolist()
+
+                        # Ensure the column dtype is object first
+                        if logprob_col not in self.columns:
+                            self[logprob_col] = None
+                        if prob_col not in self.columns:
+                            self[prob_col] = None
+
+                        # Use at[] for single cell assignment with objects
+                        self.at[self.index[i], logprob_col] = logprob_array
+                        self.at[self.index[i], prob_col] = prob_array
+
+                        #self[prob_col].iloc[i] = prob_array
+                        if DEBUG:
+                            print(f"✅ DEBUG: Successfully stored lie arrays for question {i}")
+                    except Exception as e:
+                        if DEBUG:
+                            print(f"❌ DEBUG: Error storing lie arrays for question {i}: {e}")
+                            print(f"❌ DEBUG: Error type: {type(e)}")
+                        raise
                 number_lie_logprobs_generated += 1
 
             # produce now the truth transcript; again, check if the model answers correctly.
@@ -1819,16 +1859,45 @@ class QuestionsLoader(DataFrame, ABC):
                     )
                 else:
                     # store it in the dataframe
-                    self.loc[i, f"{model_suspect}_logprobs_difference_truth"] = np.array(
-                        logprob_differences_truth
-                    )
-                    self.loc[i, f"{model_suspect}_probs_difference_truth"] = np.array(
-                        prob_differences_truth
-                    )
+                    if DEBUG:
+                        print(f"🔍 DEBUG: Storing truth logprobs for question {i}, model {model_suspect}")
+                        print(f"🔍 DEBUG: logprob_differences_truth type: {type(logprob_differences_truth)}")
+                        print(f"🔍 DEBUG: logprob_differences_truth length: {len(logprob_differences_truth) if hasattr(logprob_differences_truth, '__len__') else 'no len'}")
+                        print(f"🔍 DEBUG: prob_differences_truth type: {type(prob_differences_truth)}")
+                        print(f"🔍 DEBUG: prob_differences_truth length: {len(prob_differences_truth) if hasattr(prob_differences_truth, '__len__') else 'no len'}")
+                    
+                    try:
+                        logprob_array = np.array(logprob_differences_truth)
+                        prob_array = np.array(prob_differences_truth)
+                        if DEBUG:
+                            print(f"🔍 DEBUG: Created numpy arrays - logprob shape: {logprob_array.shape}, prob shape: {prob_array.shape}")
+                        
+                        logprob_col = f"{model_suspect}_logprobs_difference_truth"
+                        prob_col = f"{model_suspect}_probs_difference_truth"
+                        if DEBUG:
+                            print(f"🔍 DEBUG: Column names - logprob: {logprob_col}, prob: {prob_col}")
+                            print(f"🔍 DEBUG: Columns exist - logprob: {logprob_col in self.columns}, prob: {prob_col in self.columns}")
+                            print(f"🔍 DEBUG: DataFrame index type: {type(self.index)}, row {i} in index: {i in self.index}")
+                        
+                        # Use different assignment method
+                        #self[logprob_col].iloc[i] = logprob_array
+                        #self[prob_col].iloc[i] = prob_array
+
+                        self.at[self.index[i], logprob_col] = logprob_array
+                        self.at[self.index[i], prob_col] = prob_array
+
+                        if DEBUG:
+                            print(f"✅ DEBUG: Successfully stored truth arrays for question {i}")
+                    except Exception as e:
+                        if DEBUG:
+                            print(f"❌ DEBUG: Error storing truth arrays for question {i}: {e}")
+                            print(f"❌ DEBUG: Error type: {type(e)}")
+                        raise
                 number_truth_logprobs_generated += 1
 
             # store the lie configuration in the dataset
-            self.loc[i, f"{model_suspect}_probes_setup"] = {
+            setup_col = f"{model_suspect}_probes_setup"
+            self[setup_col].iloc[i] = {
                 "lie_instruction": lie_instruction,
                 "truth_instruction": truth_instruction,
                 "provide_lie": provide_lie,
