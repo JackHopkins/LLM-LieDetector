@@ -2,7 +2,6 @@ import dotenv, os
 import openai
 
 dotenv.load_dotenv()
-os.environ["OPENAI_API_KEY"] = "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"
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 # Reload the utils module to get the updated version
